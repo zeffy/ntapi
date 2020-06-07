@@ -249,25 +249,31 @@ namespace ntapi
 
     constexpr bool istarts_with(const basic_string &other) const noexcept
     {
-      const auto &facet = std::use_facet<std::ctype<char_type>>(std::locale());
+      if constexpr ( std::is_same_v<char_type, wchar_t> ) {
+        return RtlPrefixUnicodeString(&const_cast<basic_string &>(other), const_cast<basic_string<T> *>(this), TRUE);
+      } else if constexpr ( std::is_same_v<char_type, char> ) {
+        return RtlPrefixString(const_cast<basic_string *>(this), const_cast<basic_string<T> *>(this), TRUE);
+      } else {
+        const auto &facet = std::use_facet<std::ctype<char_type>>(std::locale());
 
-      auto s1 = begin();
-      auto s2 = other.begin();
+        auto s1 = begin();
+        auto s2 = other.begin();
 
-      if ( size_bytes() < other.size_bytes() )
-        return false;
-
-      while ( s2 < other.end() ) {
-        const auto c1 = *s1;
-        const auto c2 = *s2;
-        if ( (c1 != c2) && (facet.tolower(c1) != facet.tolower(c2)) )
+        if ( size_bytes() < other.size_bytes() )
           return false;
 
-        s2++;
-        s1++;
-      }
+        while ( s2 < other.end() ) {
+          const auto c1 = *s1;
+          const auto c2 = *s2;
+          if ( (c1 != c2) && (facet.tolower(c1) != facet.tolower(c2)) )
+            return false;
 
-      return true;
+          s2++;
+          s1++;
+        }
+
+        return true;
+      }
     }
 
     constexpr bool starts_with(const basic_string &other) const noexcept
