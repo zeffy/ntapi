@@ -1,7 +1,6 @@
 #pragma once
 #include <phnt_windows.h>
 #include <phnt.h>
-#include <locale>
 #include <stdexcept>
 #include <string_view>
 #include <type_traits>
@@ -214,65 +213,23 @@ namespace ntapi
 
     constexpr bool iequals(const basic_string &other) const
     {
-      const auto &facet = std::use_facet<std::ctype<char_type>>(std::locale());
-
-      size_t n1 = size_bytes();
-
-      if ( n1 == other.size_bytes() ) {
-        auto s1 = begin();
-        auto s2 = other.begin();
-
-        while ( n1 >= sizeof(uintptr_t) ) {
-          if ( *(uintptr_t *)s1 != *(uintptr_t *)s2 )
-            break;
-
-          n1 -= sizeof(uintptr_t);
-          if ( n1 == 0 )
-            return true;
-
-          s1 += sizeof(uintptr_t) / sizeof(char_type);
-          s2 += sizeof(uintptr_t) / sizeof(char_type);
-        }
-        while ( s1 < end() ) {
-          const auto c1 = *s1;
-          const auto c2 = *s2;
-          if ( (c1 != c2) && (facet.tolower(c1) != facet.tolower(c2)) )
-            return false;
-
-          s1++;
-          s2++;
-        }
-        return true;
+      if constexpr ( std::is_same_v<char_type, wchar_t> ) {
+        return RtlEqualUnicodeString(const_cast<basic_string *>(this), std::addressof(const_cast<basic_string &>(other)), TRUE);
+      } else if constexpr ( std::is_same_v<char_type, char> ) {
+        return RtlEqualString(const_cast<basic_string *>(this), std::addressof(const_cast<basic_string &>(other)), TRUE);
+      } else {
+        return false;
       }
-      return false;
     }
 
     constexpr bool istarts_with(const basic_string &other) const noexcept
     {
       if constexpr ( std::is_same_v<char_type, wchar_t> ) {
-        return RtlPrefixUnicodeString(&const_cast<basic_string &>(other), const_cast<basic_string<T> *>(this), TRUE);
+        return RtlPrefixUnicodeString(std::addressof(const_cast<basic_string &>(other)), const_cast<basic_string *>(this), TRUE);
       } else if constexpr ( std::is_same_v<char_type, char> ) {
-        return RtlPrefixString(const_cast<basic_string *>(this), const_cast<basic_string<T> *>(this), TRUE);
+        return RtlPrefixString(std::addressof(const_cast<basic_string &>(other)), const_cast<basic_string *>(this), TRUE);
       } else {
-        const auto &facet = std::use_facet<std::ctype<char_type>>(std::locale());
-
-        auto s1 = begin();
-        auto s2 = other.begin();
-
-        if ( size_bytes() < other.size_bytes() )
-          return false;
-
-        while ( s2 < other.end() ) {
-          const auto c1 = *s1;
-          const auto c2 = *s2;
-          if ( (c1 != c2) && (facet.tolower(c1) != facet.tolower(c2)) )
-            return false;
-
-          s2++;
-          s1++;
-        }
-
-        return true;
+        return false;
       }
     }
 
