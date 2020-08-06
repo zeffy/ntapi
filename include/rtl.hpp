@@ -2,7 +2,6 @@
 #include <phnt_windows.h>
 #include <phnt.h>
 
-#include <string>
 #include <iterator>
 
 #include <wil/result.h>
