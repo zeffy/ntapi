@@ -122,11 +122,10 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool ends_with(const T &String) const
     {
-      if ( this->Length < String.Length )
+      if ( this->size_bytes() < String.Length )
         return false;
 
-      const auto Suffix = unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length);
-      return Suffix.equals(String);
+      return unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length).equals(String);
     }
 
     bool ends_with(PCWSTR String) const
@@ -137,11 +136,10 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool iends_with(const T &String) const
     {
-      if ( this->Length < String.Length )
+      if ( this->size_bytes() < String.Length )
         return false;
 
-      const auto Suffix = unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length);
-      return Suffix.iequals(String);
+      return unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length).iequals(String);
     }
 
     bool iends_with(PCWSTR String) const
@@ -296,19 +294,6 @@ namespace nt::rtl
         RtlFreeUnicodeString(this);
     }
 
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    unicode_string &operator+=(const T &Source)
-    {
-      THROW_IF_NTSTATUS_FAILED(RtlAppendUnicodeStringToString(this, const_cast<T *>(std::addressof(Source))));
-      return *this;
-    }
-
-    unicode_string &operator+=(PCWSTR Source)
-    {
-      THROW_IF_NTSTATUS_FAILED(RtlAppendUnicodeToString(this, Source));
-      return *this;
-    }
-
     unicode_string to_upper() const
     {
       unicode_string DestinationString;
@@ -360,11 +345,10 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool ends_with(const T &String) const
     {
-      if ( this->Length < String.Length )
+      if ( this->size_bytes() < String.Length )
         return false;
 
-      const auto Suffix = unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length);
-      return Suffix.equals(String);
+      return unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length).equals(String);
     }
 
     bool ends_with(PCWSTR String) const
@@ -375,11 +359,10 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool iends_with(const T &String) const
     {
-      if ( this->Length < String.Length )
+      if ( this->size_bytes() < String.Length )
         return false;
 
-      const auto Suffix = unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length);
-      return Suffix.iequals(String);
+      return unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length).iequals(String);
     }
 
     bool iends_with(PCWSTR String) const
