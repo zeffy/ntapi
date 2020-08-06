@@ -2,6 +2,7 @@
 #include <phnt_windows.h>
 #include <phnt.h>
 
+#include <string>
 #include <iterator>
 
 #include <wil/result.h>
@@ -290,17 +291,10 @@ namespace nt::rtl
       RtlCreateUnicodeStringFromAsciiz(this, SourceString);
     }
 
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    unicode_string(const T &&SourceString)
-    {
-      this->Length = SourceString.Length;
-      this->MaximumLength = SourceString.MaximumLength;
-      this->Buffer = SourceString.Buffer;
-    }
-
     ~unicode_string()
     {
-      RtlFreeUnicodeString(this);
+      if ( this->Buffer )
+        RtlFreeUnicodeString(this);
     }
 
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
@@ -316,19 +310,19 @@ namespace nt::rtl
       return *this;
     }
 
-    unicode_string to_upper()
+    unicode_string to_upper() const
     {
       unicode_string DestinationString;
 
-      THROW_IF_NTSTATUS_FAILED(RtlUpcaseUnicodeString(&DestinationString, this, TRUE));
+      THROW_IF_NTSTATUS_FAILED(RtlUpcaseUnicodeString(&DestinationString, const_cast<unicode_string *>(this), TRUE));
       return DestinationString;
     }
 
-    unicode_string to_lower()
+    unicode_string to_lower() const
     {
       unicode_string DestinationString;
 
-      THROW_IF_NTSTATUS_FAILED(RtlDowncaseUnicodeString(&DestinationString, this, TRUE));
+      THROW_IF_NTSTATUS_FAILED(RtlDowncaseUnicodeString(&DestinationString, const_cast<unicode_string *>(this), TRUE));
       return DestinationString;
     }
 
