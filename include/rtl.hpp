@@ -100,7 +100,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool starts_with(const T &String) const
     {
-      return RtlPrefixUnicodeString(const_cast<T *>(std::addressof(String)), const_cast<unicode_string *>(this), FALSE);
+      return RtlPrefixUnicodeString(const_cast<T *>(std::addressof(String)), const_cast<unicode_string_view *>(this), FALSE);
     }
 
     bool starts_with(PCWSTR String) const
@@ -111,7 +111,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool istarts_with(const T &String) const
     {
-      return RtlPrefixUnicodeString(const_cast<T *>(std::addressof(String)), const_cast<unicode_string *>(this), TRUE);
+      return RtlPrefixUnicodeString(const_cast<T *>(std::addressof(String)), const_cast<unicode_string_view *>(this), TRUE);
     }
 
     bool istarts_with(PCWSTR String) const
@@ -150,7 +150,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool equals(const T &String) const
     {
-      return RtlEqualUnicodeString(const_cast<T *>(this), const_cast<unicode_string *>(std::addressof(String)), FALSE);
+      return RtlEqualUnicodeString(const_cast<unicode_string_view *>(this), const_cast<T *>(std::addressof(String)), FALSE);
     }
 
     bool equals(PCWSTR String) const
@@ -161,7 +161,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool iequals(const T &String) const
     {
-      return RtlEqualUnicodeString(const_cast<unicode_string *>(this), const_cast<unicode_string *>(std::addressof(String)), TRUE);
+      return RtlEqualUnicodeString(const_cast<unicode_string_view *>(this), const_cast<T *>(std::addressof(String)), TRUE);
     }
 
     bool iequals(PCWSTR String) const
@@ -172,7 +172,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     long compare(const T &String) const
     {
-      return RtlCompareUnicodeString(const_cast<unicode_string *>(this), const_cast<unicode_string *>(std::addressof(String)), FALSE);
+      return RtlCompareUnicodeString(const_cast<unicode_string_view *>(this), const_cast<T *>(std::addressof(String)), FALSE);
     }
 
     bool compare(PCWSTR String) const
@@ -183,7 +183,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     long icompare(const T &String) const
     {
-      return RtlCompareUnicodeString(const_cast<unicode_string *>(this), const_cast<unicode_string *>(std::addressof(String)), TRUE);
+      return RtlCompareUnicodeString(const_cast<unicode_string_view *>(this), const_cast<T *>(std::addressof(String)), TRUE);
     }
 
     bool icompare(PCWSTR String) const
@@ -236,12 +236,12 @@ namespace nt::rtl
       return const_iterator(reinterpret_cast<const UCHAR *>(this->Buffer) + this->size_bytes());
     }
 
-    reverse_iterator rbegin() const
+    const_reverse_iterator rbegin() const
     {
       return std::make_reverse_iterator(this->end());
     }
 
-    reverse_iterator rend() const
+    const_reverse_iterator rend() const
     {
       return std::make_reverse_iterator(this->begin());
     }
@@ -378,7 +378,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool equals(const T &String) const
     {
-      return RtlEqualUnicodeString(const_cast<T *>(this), const_cast<unicode_string *>(std::addressof(String)), FALSE);
+      return RtlEqualUnicodeString(const_cast<unicode_string *>(this), const_cast<T *>(std::addressof(String)), FALSE);
     }
 
     bool equals(PCWSTR String) const
@@ -389,7 +389,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     bool iequals(const T &String) const
     {
-      return RtlEqualUnicodeString(const_cast<unicode_string *>(this), const_cast<unicode_string *>(std::addressof(String)), TRUE);
+      return RtlEqualUnicodeString(const_cast<unicode_string *>(this), const_cast<T *>(std::addressof(String)), TRUE);
     }
 
     bool iequals(PCWSTR String) const
@@ -400,7 +400,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     long compare(const T &String) const
     {
-      return RtlCompareUnicodeString(const_cast<unicode_string *>(this), const_cast<unicode_string *>(std::addressof(String)), FALSE);
+      return RtlCompareUnicodeString(const_cast<unicode_string *>(this), const_cast<T *>(std::addressof(String)), FALSE);
     }
 
     bool compare(PCWSTR String) const
@@ -411,7 +411,7 @@ namespace nt::rtl
     template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     long icompare(const T &String) const
     {
-      return RtlCompareUnicodeString(const_cast<unicode_string *>(this), const_cast<unicode_string *>(std::addressof(String)), TRUE);
+      return RtlCompareUnicodeString(const_cast<unicode_string *>(this), const_cast<T *>(std::addressof(String)), TRUE);
     }
 
     bool icompare(PCWSTR String) const
@@ -494,7 +494,7 @@ namespace nt::rtl
       return std::make_reverse_iterator(this->end());
     }
 
-    reverse_iterator rbegin() const
+    const_reverse_iterator rbegin() const
     {
       return std::make_reverse_iterator(this->end());
     }
@@ -504,7 +504,7 @@ namespace nt::rtl
       return std::make_reverse_iterator(this->begin());
     }
 
-    reverse_iterator rend() const
+    const_reverse_iterator rend() const
     {
       return std::make_reverse_iterator(this->begin());
     }
