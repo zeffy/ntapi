@@ -3,6 +3,7 @@
 #include <phnt.h>
 
 #include <iterator>
+#include <type_traits>
 
 #include <wil/result.h>
 #include <wil/resource.h>
@@ -15,7 +16,6 @@ namespace nt::rtl
   public:
     using native_handle_type = struct _RTL_CRITICAL_SECTION *;
 
-  public:
     critical_section()
     {
       RtlInitializeCriticalSection(this);
