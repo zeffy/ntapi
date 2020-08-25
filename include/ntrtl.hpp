@@ -2,10 +2,11 @@
 #include <phnt_windows.h>
 #include <phnt.h>
 
-#include <span>
 #include <iterator>
-#include <type_traits>
 #include <memory>
+#include <mutex>
+#include <span>
+#include <type_traits>
 
 #include <wil/result.h>
 #include <wil/resource.h>
@@ -162,12 +163,12 @@ namespace nt::rtl
       if ( n1 != n2 )
         return false;
 
-      while ( n1 >= sizeof(std::uintptr_t) ) {
-        if ( *reinterpret_cast<const std::uintptr_t *>(&*s1) != *reinterpret_cast<const std::uintptr_t *>(&*s2) )
+      while ( n1 >= sizeof(ULONG_PTR) ) {
+        if ( *reinterpret_cast<const ULONG_PTR *>(&*s1) != *reinterpret_cast<const ULONG_PTR *>(&*s2) )
           break;
 
-        s1 += sizeof(std::uintptr_t) / sizeof(*s1);
-        s2 += sizeof(std::uintptr_t) / sizeof(*s2);
+        s1 += sizeof(ULONG_PTR) / sizeof(*s1);
+        s2 += sizeof(ULONG_PTR) / sizeof(*s2);
       }
 
       const auto end = this->end();
@@ -437,12 +438,12 @@ namespace nt::rtl
       if ( n1 != n2 )
         return false;
 
-      while ( n1 >= sizeof(std::uintptr_t) ) {
-        if ( *reinterpret_cast<const std::uintptr_t *>(&*s1) != *reinterpret_cast<const std::uintptr_t *>(&*s2) )
+      while ( n1 >= sizeof(ULONG_PTR) ) {
+        if ( *reinterpret_cast<const ULONG_PTR *>(&*s1) != *reinterpret_cast<const ULONG_PTR *>(&*s2) )
           break;
 
-        s1 += sizeof(std::uintptr_t) / sizeof(*s1);
-        s2 += sizeof(std::uintptr_t) / sizeof(*s2);
+        s1 += sizeof(ULONG_PTR) / sizeof(*s1);
+        s2 += sizeof(ULONG_PTR) / sizeof(*s2);
       }
 
       const auto end = this->end();
@@ -652,6 +653,7 @@ namespace nt::rtl
       if ( Iter != NtSections.end() )
         return std::addressof(*Iter);
     }
+    return nullptr;
   }
 
   inline PIMAGE_SECTION_HEADER image_rva_to_section(PVOID Base, ULONG Rva)
@@ -660,23 +662,14 @@ namespace nt::rtl
   }
 
   template<class T = VOID, typename = std::enable_if_t<std::is_void_v<T> || std::is_pod_v<T> || std::is_function_v<T>>>
-  inline std::add_pointer_t<T> image_rva_to_va(PIMAGE_NT_HEADERS NtHeaders, PVOID Base, ULONG Rva)
+  inline std::add_pointer_t<T> image_rva_to_va(PVOID Base, ULONG Rva)
   {
-    const auto NtSection = image_rva_to_section(NtHeaders, Base, Rva);
-    if ( NtSection ) {
-      return reinterpret_cast<std::add_pointer_t<T>>(
-        (reinterpret_cast<UINT_PTR>(Base) + (Rva - NtSection->VirtualAddress) + NtSection->PointerToRawData));
-    }
+    if ( Base )
+      return reinterpret_cast<std::add_pointer_t<T>>(reinterpret_cast<ULONG_PTR>(Base) + Rva);
     return nullptr;
   }
 
-  template<class T = VOID, typename = std::enable_if_t<std::is_void_v<T> || std::is_pod_v<T> || std::is_function_v<T>>>
-  inline std::add_pointer_t<T> image_rva_to_va(PVOID Base, ULONG Rva)
-  {
-    return image_rva_to_va<T>(image_nt_headers(Base), Base, Rva);
-  }
-
-  inline std::span<IMAGE_RUNTIME_FUNCTION_ENTRY> lookup_function_table(PVOID ControlPc, PVOID *ImageBase)
+  inline std::span<IMAGE_RUNTIME_FUNCTION_ENTRY> lookup_function_table(PVOID ControlPc, PVOID *ImageBase = nullptr)
   {
     const auto Lock = std::lock_guard{*static_cast<critical_section *>(NtCurrentPeb()->LoaderLock)};
     const auto ModuleList = &NtCurrentPeb()->Ldr->InMemoryOrderModuleList;
@@ -687,8 +680,7 @@ namespace nt::rtl
 
         const auto NtHeaders = image_nt_headers(Entry->DllBase);
         if ( NtHeaders->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_EXCEPTION ) {
-          const auto Ptr = image_rva_to_va<IMAGE_RUNTIME_FUNCTION_ENTRY>(NtHeaders,
-                                                                         Entry->DllBase,
+          const auto Ptr = image_rva_to_va<IMAGE_RUNTIME_FUNCTION_ENTRY>(Entry->DllBase,
                                                                          NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].VirtualAddress);
           const auto Size = NtHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size / sizeof(IMAGE_RUNTIME_FUNCTION_ENTRY);
           if ( ImageBase )
@@ -700,18 +692,33 @@ namespace nt::rtl
     return {};
   }
 
+#ifdef _WIN64
+  inline PIMAGE_RUNTIME_FUNCTION_ENTRY convert_function_entry(PIMAGE_RUNTIME_FUNCTION_ENTRY FunctionEntry, PVOID ImageBase)
+  {
+    if ( FunctionEntry && (FunctionEntry->UnwindData & RUNTIME_FUNCTION_INDIRECT) != 0 )
+      return reinterpret_cast<PRUNTIME_FUNCTION>(FunctionEntry->UnwindData + reinterpret_cast<ULONG_PTR>(ImageBase) - 1);
+    return FunctionEntry;
+  }
+
   inline PIMAGE_RUNTIME_FUNCTION_ENTRY lookup_function_entry(PVOID ControlPc, PVOID *ImageBase)
   {
-    const auto FunctionTable = lookup_function_table(ControlPc, ImageBase);
-    if ( !FunctionTable.empty() ) {
-      const auto RelativePc = reinterpret_cast<ULONG_PTR>(ControlPc) - reinterpret_cast<ULONG_PTR>(*ImageBase);
-      const auto Iter = std::lower_bound(FunctionTable.begin(), FunctionTable.end(), ControlPc, [](const IMAGE_RUNTIME_FUNCTION_ENTRY &FunctionEntry,
-                                                                                                   const ULONG &RelativePc) {
-        return FunctionEntry.BeginAddress >= RelativePc && RelativePc < FunctionEntry.EndAddress;
-      });
-      if ( Iter != FunctionTable.end() )
-        return std::addressof(*Iter);
+    const auto A = lookup_function_table(ControlPc, ImageBase);
+    if ( A.empty() )
+      return nullptr;
+
+    std::size_t L = 0;
+    std::size_t R = A.size() - 1;
+    const auto T = static_cast<ULONG>(reinterpret_cast<ULONG_PTR>(ControlPc) - reinterpret_cast<ULONG_PTR>(*ImageBase));
+    while ( L <= R ) {
+      const auto m = (L + R) >> 1;
+      if ( A[m].EndAddress <= T )
+        L = m + 1;
+      else if ( A[m].BeginAddress > T )
+        R = m - 1;
+      else
+        return &A[m];
     }
     return nullptr;
   }
+#endif
 }
