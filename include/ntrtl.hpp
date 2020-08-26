@@ -2,6 +2,7 @@
 #include <phnt_windows.h>
 #include <phnt.h>
 
+#include <string>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -50,36 +51,47 @@ namespace nt::rtl
     }
   };
 
-  class unicode_string_view : public _UNICODE_STRING
+  template <class T, typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING> || std::is_convertible_v<T, ANSI_STRING>>>
+  class basic_string_view : public T
   {
   public:
-    using value_type = WCHAR;
-    using pointer = PWCH;
-    using const_pointer = PCWSTR;
-    using reference = WCHAR &;
-    using const_reference = CONST WCHAR &;
+    using value_type = typename std::remove_pointer_t<decltype(T::Buffer)>;
+    using pointer = value_type *;
+    using const_pointer = CONST value_type *;
+    using reference = value_type &;
+    using const_reference = CONST value_type &;
     using iterator = pointer;
     using const_iterator = const_pointer;
 
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-    using size_type = USHORT;
-    using difference_type = SHORT;
+    using size_type = typename decltype(T::Length);
+    using difference_type = std::make_signed_t<size_type>;
 
   public:
-    unicode_string_view() = delete;
+    basic_string_view() = delete;
+    basic_string_view(const basic_string_view &) = delete;
 
-    unicode_string_view(const unicode_string_view &SourceString) = delete;
-
-    unicode_string_view(const_pointer SourceString)
+    basic_string_view(const_pointer SourceString)
     {
-      THROW_IF_NTSTATUS_FAILED(RtlInitUnicodeStringEx(this, SourceString));
+      this->Length = 0;
+      this->MaximumLength = 0;
+      this->Buffer = const_cast<pointer>(SourceString);
+      if ( SourceString ) {
+        const auto Length = std::char_traits<value_type>::length(SourceString) * sizeof(value_type);
+
+        if ( Length > (std::numeric_limits<size_type>::max() - sizeof(value_type)) )
+          THROW_NTSTATUS(STATUS_NAME_TOO_LONG);
+
+        this->Length = static_cast<size_type>(Length);
+        this->MaximumLength = static_cast<size_type>(Length + sizeof(value_type));
+      }
     }
 
-    unicode_string_view(const_pointer SourceString, size_type Length)
+    basic_string_view(const_pointer SourceString, size_type Length)
     {
-      this->Buffer = const_cast<pointer>(SourceString);
+      this->Length = 0;
       this->Length = Length;
       this->MaximumLength = Length;
     }
@@ -89,147 +101,6 @@ namespace nt::rtl
       return this->Buffer[index];
     }
 
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool starts_with(const T &String) const
-    {
-      auto s1 = this->begin();
-      auto s2 = String.Buffer;
-      const auto n = this->size_bytes();
-
-      if ( String.Length < n )
-        return false;
-
-      const auto end = this->end();
-      while ( s1 < end ) {
-        if ( *s1++ != *s2++ )
-          return false;
-      }
-      return true;
-    }
-
-    bool starts_with(PCWSTR String) const
-    {
-      return this->starts_with(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool istarts_with(const T &String) const
-    {
-      return RtlPrefixUnicodeString(const_cast<T *>(std::addressof(String)), const_cast<unicode_string_view *>(this), TRUE);
-    }
-
-    bool istarts_with(PCWSTR String) const
-    {
-      return this->istarts_with(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool ends_with(const T &String) const
-    {
-      if ( this->size_bytes() < String.Length )
-        return false;
-
-      return unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length).equals(String);
-    }
-
-    bool ends_with(PCWSTR String) const
-    {
-      return this->ends_with(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool iends_with(const T &String) const
-    {
-      if ( this->size_bytes() < String.Length )
-        return false;
-
-      return unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length).iequals(String);
-    }
-
-    bool iends_with(PCWSTR String) const
-    {
-      return this->iends_with(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool equals(const T &String) const
-    {
-      auto s1 = this->begin();
-      auto s2 = String.Buffer;
-
-      const auto n1 = this->size_bytes();
-      const auto n2 = String.Length;
-
-      if ( n1 != n2 )
-        return false;
-
-      while ( n1 >= sizeof(ULONG_PTR) ) {
-        if ( *reinterpret_cast<const ULONG_PTR *>(&*s1) != *reinterpret_cast<const ULONG_PTR *>(&*s2) )
-          break;
-
-        s1 += sizeof(ULONG_PTR) / sizeof(*s1);
-        s2 += sizeof(ULONG_PTR) / sizeof(*s2);
-      }
-
-      const auto end = this->end();
-      while ( s1 < end ) {
-        if ( *s1++ != *s2++ )
-          return false;
-      }
-      return true;
-    }
-
-    bool equals(PCWSTR String) const
-    {
-      return this->equals(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool iequals(const T &String) const
-    {
-      return RtlEqualUnicodeString(const_cast<unicode_string_view *>(this), const_cast<T *>(std::addressof(String)), TRUE);
-    }
-
-    bool iequals(PCWSTR String) const
-    {
-      return this->iequals(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    long compare(const T &String) const
-    {
-      auto s1 = this->begin();
-      auto s2 = String.Buffer;
-
-      const auto n1 = this->size_bytes();
-      const auto n2 = String.Length;
-
-      const auto end = this->end();
-      while ( s1 < end ) {
-        if ( *s1 != *s2 )
-          return static_cast<long>(*s1) - static_cast<long>(*s2);
-        ++s1;
-        ++s2;
-      }
-      return n1 - n2;
-    }
-
-    long compare(PCWSTR String) const
-    {
-      return this->compare(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    long icompare(const T &String) const
-    {
-      return RtlCompareUnicodeString(const_cast<unicode_string_view *>(this), const_cast<T *>(std::addressof(String)), TRUE);
-    }
-
-    long icompare(PCWSTR String) const
-    {
-      return this->icompare(unicode_string_view(String));
-    }
-
     const_pointer data() const
     {
       return this->Buffer;
@@ -247,22 +118,22 @@ namespace nt::rtl
 
     size_type size() const
     {
-      return this->size_bytes() / sizeof(value_type);
+      return size_bytes() / sizeof(value_type);
     }
 
     bool empty() const
     {
-      return !this->size_bytes();
+      return !size_bytes();
     }
 
     const_reference front() const
     {
-      return this->operator[](0);
+      return operator[](0);
     }
 
     const_reference back() const
     {
-      return this->operator[](this->size() - 1);
+      return operator[](this->size() - 1);
     }
 
     const_iterator begin() const
@@ -272,216 +143,28 @@ namespace nt::rtl
 
     const_iterator end() const
     {
-      return const_iterator(reinterpret_cast<const UCHAR *>(this->Buffer) + this->size_bytes());
+      return const_iterator{reinterpret_cast<const UCHAR *>(this->Buffer) + size_bytes()};
     }
 
     const_reverse_iterator rbegin() const
     {
-      return std::make_reverse_iterator(this->end());
+      return std::make_reverse_iterator(end());
     }
 
     const_reverse_iterator rend() const
     {
-      return std::make_reverse_iterator(this->begin());
-    }
-  };
-
-  class unicode_string : public _UNICODE_STRING
-  {
-  public:
-    using value_type = WCHAR;
-    using pointer = PWCH;
-    using const_pointer = PCWSTR;
-    using reference = WCHAR &;
-    using const_reference = CONST WCHAR &;
-    using iterator = pointer;
-    using const_iterator = const_pointer;
-
-    using reverse_iterator = std::reverse_iterator<iterator>;
-    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
-
-    using size_type = USHORT;
-    using difference_type = SHORT;
-
-  public:
-    unicode_string()
-    {
-      this->Length = 0;
-      this->MaximumLength = 0;
-      this->Buffer = nullptr;
+      return std::make_reverse_iterator(begin());
     }
 
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    unicode_string(const T &SourceString)
-    {
-      THROW_IF_NTSTATUS_FAILED(RtlDuplicateUnicodeString(RTL_DUPLICATE_UNICODE_STRING_NULL_TERMINATE, const_cast<T *>(std::addressof(SourceString)), this));
-    }
-
-    unicode_string(PCWSTR SourceString)
-    {
-      if ( !RtlCreateUnicodeString(this, SourceString) )
-        throw std::bad_alloc();
-    }
-
-    ~unicode_string()
-    {
-      if ( this->Buffer )
-        RtlFreeUnicodeString(this);
-    }
-
-    unicode_string to_upper() const
-    {
-      unicode_string DestinationString;
-
-      THROW_IF_NTSTATUS_FAILED(RtlUpcaseUnicodeString(&DestinationString, const_cast<unicode_string *>(this), TRUE));
-      return DestinationString;
-    }
-
-    unicode_string to_lower() const
-    {
-      unicode_string DestinationString;
-
-      THROW_IF_NTSTATUS_FAILED(RtlDowncaseUnicodeString(&DestinationString, const_cast<unicode_string *>(this), TRUE));
-      return DestinationString;
-    }
-
-    reference operator[](size_t index)
-    {
-      return this->Buffer[index];
-    }
-
-    const_reference operator[](size_t index) const
-    {
-      return this->Buffer[index];
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool starts_with(const T &String) const
-    {
-      auto s1 = this->begin();
-      auto s2 = String.Buffer;
-      const auto n = this->size_bytes();
-
-      if ( String.Length < n )
-        return false;
-
-      const auto end = this->end();
-      while ( s1 < end ) {
-        if ( *s1++ != *s2++ )
-          return false;
-      }
-      return true;
-    }
-
-    bool starts_with(PCWSTR String) const
-    {
-      return this->starts_with(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool istarts_with(const T &String) const
-    {
-      return RtlPrefixUnicodeString(const_cast<T *>(std::addressof(String)), const_cast<unicode_string *>(this), TRUE);
-    }
-
-    bool istarts_with(PCWSTR String) const
-    {
-      return this->istarts_with(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool ends_with(const T &String) const
-    {
-      if ( this->size_bytes() < String.Length )
-        return false;
-
-      return unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length).equals(String);
-    }
-
-    bool ends_with(PCWSTR String) const
-    {
-      return this->ends_with(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool iends_with(const T &String) const
-    {
-      if ( this->size_bytes() < String.Length )
-        return false;
-
-      return unicode_string_view(this->data() + (this->size_bytes() - String.Length), String.Length).iequals(String);
-    }
-
-    bool iends_with(PCWSTR String) const
-    {
-      return this->iends_with(unicode_string_view(String));
-    }
-
-    void clear()
-    {
-      if ( this->data() == nullptr || this->capacity() == 0 )
-        return;
-
-      std::memset(this->data(), 0, this->capacity());
-      this->Length = 0;
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool equals(const T &String) const
-    {
-      auto s1 = this->begin();
-      auto s2 = String.Buffer;
-
-      const auto n1 = this->size_bytes();
-      const auto n2 = String.Length;
-
-      if ( n1 != n2 )
-        return false;
-
-      while ( n1 >= sizeof(ULONG_PTR) ) {
-        if ( *reinterpret_cast<const ULONG_PTR *>(&*s1) != *reinterpret_cast<const ULONG_PTR *>(&*s2) )
-          break;
-
-        s1 += sizeof(ULONG_PTR) / sizeof(*s1);
-        s2 += sizeof(ULONG_PTR) / sizeof(*s2);
-      }
-
-      const auto end = this->end();
-      while ( s1 < end ) {
-        if ( *s1++ != *s2++ )
-          return false;
-      }
-      return true;
-    }
-
-    bool equals(PCWSTR String) const
-    {
-      return this->equals(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    bool iequals(const T &String) const
-    {
-      return RtlEqualUnicodeString(const_cast<unicode_string *>(this), const_cast<T *>(std::addressof(String)), TRUE);
-    }
-
-    bool iequals(PCWSTR String) const
-    {
-      return this->iequals(unicode_string_view(String));
-    }
-
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
     long compare(const T &String) const
     {
-
-      auto s1 = this->begin();
+      auto s1 = begin();
       auto s2 = String.Buffer;
 
-      const auto n1 = this->size_bytes();
+      const auto n1 = size_bytes();
       const auto n2 = String.Length;
 
-      const auto end = this->end();
-      while ( s1 < end ) {
+      while ( s1 < end() ) {
         if ( *s1 != *s2 )
           return static_cast<long>(*s1) - static_cast<long>(*s2);
         ++s1;
@@ -490,150 +173,155 @@ namespace nt::rtl
       return n1 - n2;
     }
 
-    long compare(PCWSTR String) const
+    long compare(const_pointer String) const
     {
-      return this->compare(unicode_string_view(String));
+      return this->compare(basic_string_view{String});
     }
 
-    template<class T, typename = std::enable_if_t<std::is_convertible_v<T, struct _UNICODE_STRING>>>
-    long icompare(const T &String) const
+    template<typename = std::enable_if_t<std::is_convertible_v<T, ANSI_STRING>>>
+    long icompare(const ANSI_STRING &String) const
     {
-      return RtlCompareUnicodeString(const_cast<unicode_string *>(this), const_cast<T *>(std::addressof(String)), TRUE);
+      return ::RtlCompareString(const_cast<basic_string_view *>(this),
+                                const_cast<PANSI_STRING>(std::addressof(String)), TRUE);
     }
 
-    long icompare(PCWSTR String) const
+    template<typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING>>>
+    long icompare(const UNICODE_STRING &String) const
     {
-      return this->icompare(unicode_string_view(String));
+      return ::RtlCompareUnicodeString(const_cast<basic_string_view *>(this),
+                                       const_cast<PUNICODE_STRING>(std::addressof(String)), TRUE);
     }
 
-    pointer data()
+    long icompare(const_pointer String) const
     {
-      return this->Buffer;
+      return icompare(basic_string_view{String});
     }
 
-    const_pointer data() const
+    bool equals(const T &String) const
     {
-      return this->Buffer;
+      auto s1 = begin();
+      auto s2 = String.Buffer;
+
+      const auto n1 = size_bytes();
+      const auto n2 = String.Length;
+
+      if ( n1 != n2 )
+        return false;
+
+      while ( n1 >= sizeof(ULONG_PTR) ) {
+        if ( *reinterpret_cast<const ULONG_PTR *>(std::addressof(*s1)) != *reinterpret_cast<const ULONG_PTR *>(std::addressof(*s2)) )
+          break;
+
+        s1 += sizeof(ULONG_PTR) / sizeof(*s1);
+        s2 += sizeof(ULONG_PTR) / sizeof(*s2);
+      }
+
+      while ( s1 < end() ) {
+        if ( *s1++ != *s2++ )
+          return false;
+      }
+      return true;
     }
 
-    size_type capacity() const
+    bool equals(const_pointer String) const
     {
-      return this->MaximumLength;
+      return equals(basic_string_view{String});
     }
 
-    size_type size_bytes() const
+    template<typename = std::enable_if_t<std::is_convertible_v<T, ANSI_STRING>>>
+    bool iequals(const ANSI_STRING &String) const
     {
-      return this->Length;
+      return ::RtlEqualString(const_cast<basic_string_view *>(this),
+                              const_cast<PANSI_STRING>(std::addressof(String)), TRUE);
     }
 
-    size_type size() const
+    template<typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING>>>
+    bool iequals(const UNICODE_STRING &String) const
     {
-      return this->size_bytes() / sizeof(value_type);
+      return ::RtlEqualUnicodeString(const_cast<basic_string_view *>(this),
+                                     const_cast<PUNICODE_STRING>(std::addressof(String)), TRUE);
     }
 
-    bool empty() const
+    bool iequals(const_pointer String) const
     {
-      return !this->size_bytes();
+      return iequals(basic_string_view{String});
     }
 
-    reference front()
+    bool starts_with(const T &String) const
     {
-      return this->operator[](0);
+      auto s1 = begin();
+      auto s2 = String.Buffer;
+      const auto n = size_bytes();
+
+      if ( String.Length < n )
+        return false;
+
+      while ( s1 < end() ) {
+        if ( *s1++ != *s2++ )
+          return false;
+      }
+      return true;
     }
 
-    const_reference front() const
+    bool starts_with(const_pointer String) const
     {
-      return this->operator[](0);
+      return starts_with(basic_string_view{String});
     }
 
-    reference back()
+    template<typename = std::enable_if_t<std::is_convertible_v<T, ANSI_STRING>>>
+    bool istarts_with(const ANSI_STRING &String) const
     {
-      return this->operator[](this->size() - 1);
+      return ::RtlPrefixString(const_cast<PANSI_STRING>(std::addressof(String)),
+                               const_cast<basic_string_view *>(this), TRUE);
     }
 
-    const_reference back() const
+    template<typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING>>>
+    bool istarts_with(const UNICODE_STRING &String) const
     {
-      return this->operator[](this->size() - 1);
+      return ::RtlPrefixUnicodeString(const_cast<PUNICODE_STRING>(std::addressof(String)),
+                                      const_cast<basic_string_view *>(this), TRUE);
     }
 
-    iterator begin()
+    bool istarts_with(const_pointer String) const
     {
-      return this->Buffer;
+      return istarts_with(basic_string_view{String});
     }
 
-    const_iterator begin() const
+    bool ends_with(const T &String) const
     {
-      return this->Buffer;
+      if ( size_bytes() < String.Length )
+        return false;
+
+      return basic_string_view{data() + (size_bytes() - String.Length), String.Length}.equals(String);
     }
 
-    iterator end()
+    bool ends_with(const_pointer String) const
     {
-      return iterator(reinterpret_cast<UCHAR *>(this->Buffer) + this->size_bytes());
+      return ends_with(basic_string_view{String});
     }
 
-    const_iterator end() const
+    bool iends_with(const T &String) const
     {
-      return const_iterator(reinterpret_cast<const UCHAR *>(this->Buffer) + this->size_bytes());
+      if ( size_bytes() < String.Length )
+        return false;
+
+      return basic_string_view{data() + (size_bytes() - String.Length), String.Length}.iequals(String);
     }
 
-    reverse_iterator rbegin()
+    bool iends_with(const_pointer String) const
     {
-      return std::make_reverse_iterator(this->end());
-    }
-
-    const_reverse_iterator rbegin() const
-    {
-      return std::make_reverse_iterator(this->end());
-    }
-
-    reverse_iterator rend()
-    {
-      return std::make_reverse_iterator(this->begin());
-    }
-
-    const_reverse_iterator rend() const
-    {
-      return std::make_reverse_iterator(this->begin());
+      return iends_with(basic_string_view{String});
     }
   };
 
-  inline unicode_string to_unicode_string(const struct _STRING &SourceString)
-  {
-    unicode_string DestinationString;
-
-    THROW_IF_NTSTATUS_FAILED(RtlAnsiStringToUnicodeString(&DestinationString, const_cast<struct _STRING *>(std::addressof(SourceString)), TRUE));
-    return DestinationString;
-  }
-
-  inline unicode_string to_unicode_string(PCSZ SourceString)
-  {
-    struct _STRING AnsiString;
-
-    THROW_IF_NTSTATUS_FAILED(RtlInitAnsiStringEx(&AnsiString, SourceString));
-    return to_unicode_string(AnsiString);
-  }
-
-  inline unicode_string to_unicode_string(ULONGLONG Value, ULONG Base)
-  {
-    unicode_string DestinationString;
-
-    THROW_IF_NTSTATUS_FAILED(RtlInt64ToUnicodeString(Value, Base, &DestinationString));
-    return DestinationString;
-  }
-
-  inline unicode_string to_unicode_string(ULONG Value, ULONG Base)
-  {
-    unicode_string DestinationString;
-
-    THROW_IF_NTSTATUS_FAILED(RtlIntegerToUnicodeString(Value, Base, &DestinationString));
-    return DestinationString;
-  }
+  using ansi_string_view = basic_string_view<ANSI_STRING>;
+  using unicode_string_view = basic_string_view<UNICODE_STRING>;
 
   template<class T = VOID, typename = std::enable_if_t<std::is_void_v<T> || std::is_pod_v<T> || std::is_function_v<T>>>
-  inline std::add_pointer_t<T> image_rva_to_va(PVOID Base, ULONG Rva)
+  inline T *image_rva_to_va(PVOID Base, ULONG Rva)
   {
     if ( Base )
-      return reinterpret_cast<std::add_pointer_t<T>>(reinterpret_cast<ULONG_PTR>(Base) + Rva);
+      return reinterpret_cast<T *>(reinterpret_cast<PUCHAR>(Base) + Rva);
     return nullptr;
   }
 
@@ -648,24 +336,6 @@ namespace nt::rtl
       }
     }
     return nullptr;
-  }
-
-  inline PIMAGE_SECTION_HEADER image_rva_to_section(PIMAGE_NT_HEADERS NtHeaders, PVOID Base, ULONG Rva)
-  {
-    if ( NtHeaders ) {
-      const auto NtSections = std::span{IMAGE_FIRST_SECTION(NtHeaders), NtHeaders->FileHeader.NumberOfSections};
-      const auto Iter = std::find_if(std::begin(NtSections), std::end(NtSections), [Rva](const IMAGE_SECTION_HEADER &NtSection) {
-        return Rva >= NtSection.VirtualAddress && Rva < NtSection.VirtualAddress + NtSection.SizeOfRawData;
-      });
-      if ( Iter != std::end(NtSections) )
-        return std::addressof(*Iter);
-    }
-    return nullptr;
-  }
-
-  inline PIMAGE_SECTION_HEADER image_rva_to_section(PVOID Base, ULONG Rva)
-  {
-    return image_rva_to_section(image_nt_headers(Base), Base, Rva);
   }
 
   template<class T = UCHAR, typename = std::enable_if_t<std::is_pod_v<T>>>
@@ -688,8 +358,8 @@ namespace nt::rtl
     const auto ModuleList = &NtCurrentPeb()->Ldr->InMemoryOrderModuleList;
     for ( auto Next = ModuleList->Flink; Next != ModuleList; Next = Next->Flink ) {
       const auto Entry = CONTAINING_RECORD(Next, LDR_DATA_TABLE_ENTRY, InMemoryOrderLinks);
-      if ( (reinterpret_cast<ULONG_PTR>(ControlPc) >= reinterpret_cast<ULONG_PTR>(Entry->DllBase))
-          && (reinterpret_cast<ULONG_PTR>(ControlPc) < reinterpret_cast<ULONG_PTR>(Entry->DllBase) + Entry->SizeOfImage) ) {
+      if ( (ControlPc >= Entry->DllBase)
+          && (ControlPc < reinterpret_cast<PUCHAR>(Entry->DllBase) + Entry->SizeOfImage) ) {
 
         return {image_directory_entry_to_data<IMAGE_RUNTIME_FUNCTION_ENTRY>(Entry->DllBase, IMAGE_DIRECTORY_ENTRY_EXCEPTION), Entry->DllBase};
       }
