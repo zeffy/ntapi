@@ -355,9 +355,9 @@ namespace nt::rtl
   inline std::pair<std::span<IMAGE_RUNTIME_FUNCTION_ENTRY>, PVOID> lookup_function_table(PVOID ControlPc)
   {
     const auto Lock = std::lock_guard{*static_cast<critical_section *>(NtCurrentPeb()->LoaderLock)};
-    const auto ModuleList = &NtCurrentPeb()->Ldr->InMemoryOrderModuleList;
+    const auto ModuleList = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
     for ( auto Next = ModuleList->Flink; Next != ModuleList; Next = Next->Flink ) {
-      const auto Entry = CONTAINING_RECORD(Next, LDR_DATA_TABLE_ENTRY, InMemoryOrderLinks);
+      const auto Entry = CONTAINING_RECORD(Next, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
       if ( (ControlPc >= Entry->DllBase)
           && (ControlPc < reinterpret_cast<PUCHAR>(Entry->DllBase) + Entry->SizeOfImage) ) {
 
@@ -365,5 +365,20 @@ namespace nt::rtl
       }
     }
     return {};
+  }
+
+  inline PVOID pc_to_file_header(PVOID PcValue)
+  {
+    if ( PcValue ) {
+      const auto Lock = std::lock_guard{*static_cast<critical_section *>(NtCurrentPeb()->LoaderLock)};
+      const auto ModuleList = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
+      for ( auto Next = ModuleList->Flink; Next != ModuleList; Next = Next->Flink ) {
+        const auto Entry = CONTAINING_RECORD(Next, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        const auto Low = reinterpret_cast<std::uint8_t *>(Entry->DllBase);
+        if ( PcValue >= Low && PcValue < Low + Entry->SizeOfImage )
+          return Entry->DllBase;
+      }
+    }
+    return nullptr;
   }
 }

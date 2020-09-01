@@ -25,8 +25,7 @@ namespace nt::amd64
 
     std::size_t L = 0;
     std::size_t R = A.size() - 1;
-    const auto T = static_cast<ULONG>(
-      reinterpret_cast<ULONG_PTR>(ControlPc) - reinterpret_cast<ULONG_PTR>(ImageBase));
+    const auto T = reinterpret_cast<PUCHAR>(ControlPc) - reinterpret_cast<PUCHAR>(ImageBase);
     while ( L <= R ) {
       const auto m = (L + R) >> 1;
       if ( A[m].EndAddress <= T )
