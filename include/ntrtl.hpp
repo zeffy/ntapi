@@ -251,12 +251,13 @@ namespace nt::rtl
     {
       auto s1 = begin();
       auto s2 = String.Buffer;
-      const auto n = size_bytes();
+      const auto n = String.Length;
 
-      if ( String.Length < n )
+      if ( size_bytes() < n )
         return false;
 
-      while ( s1 < end() ) {
+      const auto end = reinterpret_cast<PWCH>(reinterpret_cast<PUCHAR>(s2) + n);
+      while ( s2 < end ) {
         if ( *s1++ != *s2++ )
           return false;
       }
