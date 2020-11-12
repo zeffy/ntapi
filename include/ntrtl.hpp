@@ -321,14 +321,18 @@ namespace nt::rtl
   template<class T = VOID, typename = std::enable_if_t<std::is_void_v<T> || std::is_pod_v<T> || std::is_function_v<T>>>
   inline T *image_rva_to_va(PVOID Base, ULONG Rva)
   {
-    if ( Base )
-      return reinterpret_cast<T *>(reinterpret_cast<PUCHAR>(Base) + Rva);
-    return nullptr;
+    if ( !Base )
+      Base = NtCurrentPeb()->ImageBaseAddress;
+
+    return reinterpret_cast<T *>(reinterpret_cast<PUCHAR>(Base) + Rva);
   }
 
   inline PIMAGE_NT_HEADERS image_nt_headers(PVOID Base)
   {
-    if ( Base != nullptr && Base != reinterpret_cast<PVOID>(-1) ) {
+    if ( !Base )
+      Base = NtCurrentPeb()->ImageBaseAddress;
+
+    if ( Base != reinterpret_cast<PVOID>(-1) ) {
       const auto DosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(Base);
       if ( DosHeader->e_magic == IMAGE_DOS_SIGNATURE ) {
         const auto NtHeaders = image_rva_to_va<IMAGE_NT_HEADERS>(Base, DosHeader->e_lfanew);
