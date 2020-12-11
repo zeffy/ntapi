@@ -2,11 +2,12 @@
 #include <phnt_windows.h>
 #include <phnt.h>
 
-#include <string>
+#include <cstddef>
 #include <iterator>
 #include <memory>
 #include <mutex>
 #include <span>
+#include <string>
 #include <type_traits>
 
 #include <wil/result.h>
@@ -15,10 +16,10 @@
 
 namespace nt::rtl
 {
-  class critical_section : public _RTL_CRITICAL_SECTION
+  class critical_section : public RTL_CRITICAL_SECTION
   {
   public:
-    using native_handle_type = struct _RTL_CRITICAL_SECTION *;
+    using native_handle_type = PRTL_CRITICAL_SECTION;
 
     critical_section()
     {
@@ -318,7 +319,7 @@ namespace nt::rtl
   using ansi_string_view = basic_string_view<ANSI_STRING>;
   using unicode_string_view = basic_string_view<UNICODE_STRING>;
 
-  template<class T = VOID, typename = std::enable_if_t<std::is_void_v<T> || std::is_pod_v<T> || std::is_function_v<T>>>
+  template<class T = void, typename = std::enable_if_t<std::is_void_v<T> || std::is_pod_v<T> || std::is_function_v<T>>>
   inline T *image_rva_to_va(PVOID Base, ULONG Rva)
   {
     if ( !Base )
@@ -355,6 +356,15 @@ namespace nt::rtl
       }
     }
     return {};
+  }
+
+  static inline std::span<IMAGE_SECTION_HEADER> image_sections(PVOID Base)
+  {
+    const auto NtHeaders = image_nt_headers(Base);
+    const auto Ptr = reinterpret_cast<PIMAGE_SECTION_HEADER>(
+        reinterpret_cast<ULONG_PTR>(NtHeaders) + offsetof(IMAGE_NT_HEADERS, OptionalHeader) + NtHeaders->FileHeader.SizeOfOptionalHeader);
+
+    return {Ptr, NtHeaders->FileHeader.NumberOfSections};
   }
 
   inline std::pair<std::span<IMAGE_RUNTIME_FUNCTION_ENTRY>, PVOID> lookup_function_table(PVOID ControlPc)
