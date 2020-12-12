@@ -8,6 +8,7 @@
 #include <mutex>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 
 #include <wil/result.h>
@@ -365,6 +366,24 @@ namespace nt::rtl
         reinterpret_cast<ULONG_PTR>(NtHeaders) + offsetof(IMAGE_NT_HEADERS, OptionalHeader) + NtHeaders->FileHeader.SizeOfOptionalHeader);
 
     return {Ptr, NtHeaders->FileHeader.NumberOfSections};
+  }
+
+  static inline auto find_image_section(const std::span<IMAGE_SECTION_HEADER> &Sections, PCSTR Name, DWORD Characteristics = 0)
+  {
+    return std::find_if(Sections.begin(), Sections.end(), [Name, Characteristics](const auto &Section) {
+      if ( (Section.Characteristics & Characteristics) == Characteristics ) {
+        if ( !Name )
+          return true;
+
+        SIZE_T Size;
+        for ( Size = 0; Size < IMAGE_SIZEOF_SHORT_NAME; ++Size ) {
+          if ( !Section.Name[Size] )
+            break;
+        }
+        return std::string_view{reinterpret_cast<PCSTR>(Section.Name), Size} == Name;
+      }
+      return false;
+    });
   }
 
   inline std::pair<std::span<IMAGE_RUNTIME_FUNCTION_ENTRY>, PVOID> lookup_function_table(PVOID ControlPc)
