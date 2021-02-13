@@ -17,15 +17,18 @@ namespace nt::amd64
     return FunctionEntry;
   }
 
-  inline std::pair<PRUNTIME_FUNCTION, PVOID> lookup_function_entry(PVOID ControlPc)
+  inline PRUNTIME_FUNCTION lookup_function_entry(PVOID ControlPc, PVOID *ImageBase)
   {
-    const auto [A, ImageBase] = rtl::lookup_function_table(ControlPc);
+    PVOID DllBase;
+    const auto A = rtl::lookup_function_table(ControlPc, &DllBase);
+    if ( ImageBase )
+      *ImageBase = DllBase;
     if ( A.empty() )
-      return {};
+      return nullptr;
 
     std::size_t L = 0;
     std::size_t R = A.size() - 1;
-    const auto T = reinterpret_cast<PUCHAR>(ControlPc) - reinterpret_cast<PUCHAR>(ImageBase);
+    const auto T = reinterpret_cast<PUCHAR>(ControlPc) - reinterpret_cast<PUCHAR>(DllBase);
     while ( L <= R ) {
       const auto m = (L + R) >> 1;
       if ( A[m].EndAddress <= T )
@@ -33,9 +36,9 @@ namespace nt::amd64
       else if ( A[m].BeginAddress > T )
         R = m - 1;
       else
-        return {convert_function_entry(std::addressof(A[m]), ImageBase), ImageBase};
+        return convert_function_entry(std::addressof(A[m]), DllBase);
     }
-    return {};
+    return nullptr;
   }
 }
 #endif

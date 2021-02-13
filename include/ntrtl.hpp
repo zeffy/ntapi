@@ -184,14 +184,14 @@ namespace nt::rtl
     long icompare(const ANSI_STRING &String) const
     {
       return ::RtlCompareString(const_cast<basic_string_view *>(this),
-                                const_cast<PANSI_STRING>(std::addressof(String)), TRUE);
+        const_cast<PANSI_STRING>(std::addressof(String)), TRUE);
     }
 
     template<typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING>>>
     long icompare(const UNICODE_STRING &String) const
     {
       return ::RtlCompareUnicodeString(const_cast<basic_string_view *>(this),
-                                       const_cast<PUNICODE_STRING>(std::addressof(String)), TRUE);
+        const_cast<PUNICODE_STRING>(std::addressof(String)), TRUE);
     }
 
     long icompare(const_pointer String) const
@@ -234,14 +234,14 @@ namespace nt::rtl
     bool iequals(const ANSI_STRING &String) const
     {
       return ::RtlEqualString(const_cast<basic_string_view *>(this),
-                              const_cast<PANSI_STRING>(std::addressof(String)), TRUE);
+        const_cast<PANSI_STRING>(std::addressof(String)), TRUE);
     }
 
     template<typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING>>>
     bool iequals(const UNICODE_STRING &String) const
     {
       return ::RtlEqualUnicodeString(const_cast<basic_string_view *>(this),
-                                     const_cast<PUNICODE_STRING>(std::addressof(String)), TRUE);
+        const_cast<PUNICODE_STRING>(std::addressof(String)), TRUE);
     }
 
     bool iequals(const_pointer String) const
@@ -275,14 +275,14 @@ namespace nt::rtl
     bool istarts_with(const ANSI_STRING &String) const
     {
       return ::RtlPrefixString(const_cast<PANSI_STRING>(std::addressof(String)),
-                               const_cast<basic_string_view *>(this), TRUE);
+        const_cast<basic_string_view *>(this), TRUE);
     }
 
     template<typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING>>>
     bool istarts_with(const UNICODE_STRING &String) const
     {
       return ::RtlPrefixUnicodeString(const_cast<PUNICODE_STRING>(std::addressof(String)),
-                                      const_cast<basic_string_view *>(this), TRUE);
+        const_cast<basic_string_view *>(this), TRUE);
     }
 
     bool istarts_with(const_pointer String) const
@@ -326,7 +326,7 @@ namespace nt::rtl
     if ( !Base )
       Base = NtCurrentPeb()->ImageBaseAddress;
 
-    return reinterpret_cast<T *>(reinterpret_cast<PUCHAR>(Base) + Rva);
+    return Rva ? reinterpret_cast<T *>(reinterpret_cast<PUCHAR>(Base) + Rva) : nullptr;
   }
 
   inline PIMAGE_NT_HEADERS image_nt_headers(PVOID Base)
@@ -334,36 +334,124 @@ namespace nt::rtl
     if ( !Base )
       Base = NtCurrentPeb()->ImageBaseAddress;
 
-    if ( Base != reinterpret_cast<PVOID>(-1) ) {
-      const auto DosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(Base);
-      if ( DosHeader->e_magic == IMAGE_DOS_SIGNATURE ) {
-        const auto NtHeaders = image_rva_to_va<IMAGE_NT_HEADERS>(Base, DosHeader->e_lfanew);
-        if ( NtHeaders->Signature == IMAGE_NT_SIGNATURE )
-          return NtHeaders;
-      }
+    const auto DosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(Base);
+    __try {
+      if ( DosHeader->e_magic != IMAGE_DOS_SIGNATURE )
+        return nullptr;
+
+      const auto NtHeaders = image_rva_to_va<IMAGE_NT_HEADERS>(Base, DosHeader->e_lfanew);
+      if ( NtHeaders->Signature != IMAGE_NT_SIGNATURE )
+        return nullptr;
+
+      if ( !NtHeaders->FileHeader.SizeOfOptionalHeader )
+        return nullptr;
+
+      return NtHeaders;
+    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
+      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+      return nullptr;
     }
-    return nullptr;
   }
 
   template<class T = UCHAR, typename = std::enable_if_t<std::is_pod_v<T>>>
-  inline std::span<T> image_directory_entry_to_data(PVOID Base, USHORT DirectoryEntry)
+  inline T *image_directory_entry_to_data(PVOID Base, USHORT DirectoryEntry, ULONG *Size = nullptr)
   {
-    const auto NtHeaders = image_nt_headers(Base);
-    if ( NtHeaders ) {
-      if ( DirectoryEntry < NtHeaders->OptionalHeader.NumberOfRvaAndSizes ) {
-        const auto Rva = NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].VirtualAddress;
-        const auto Size = NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].Size;
-        return {image_rva_to_va<T>(Base, Rva), Size / sizeof(T)};
-      }
+    __try {
+      const auto NtHeaders = nt::rtl::image_nt_headers(Base);
+      if ( NtHeaders->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR_MAGIC )
+        return nullptr;
+
+      if ( DirectoryEntry >= NtHeaders->OptionalHeader.NumberOfRvaAndSizes
+        || !NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].VirtualAddress
+        || !NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].Size )
+        return nullptr;
+
+      if ( Size )
+        *Size = NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].Size;
+
+      return image_rva_to_va<T>(Base, NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].VirtualAddress);
+    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
+      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+      return nullptr;
     }
-    return {};
+  }
+
+  inline PVOID image_entry_point(PVOID Base)
+  {
+    __try {
+      const auto NtHeaders = nt::rtl::image_nt_headers(Base);
+
+      ULONG Size;
+      const auto ClrHeader = nt::rtl::image_directory_entry_to_data<IMAGE_COR20_HEADER>(Base, IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR, &Size);
+
+      if ( ClrHeader ) {
+        const auto hClr = GetModuleHandleW(L"mscoree.dll");
+        if ( !hClr )
+          return nullptr;
+
+        return GetProcAddress(hClr, "_CorExeMain");
+      }
+
+      return image_rva_to_va(Base, NtHeaders->OptionalHeader.AddressOfEntryPoint);
+    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
+      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+      return nullptr;
+    }
+  }
+
+  inline ULONG image_size(PVOID Base)
+  {
+    __try {
+      const auto NtHeaders = nt::rtl::image_nt_headers(Base);
+      return NtHeaders->OptionalHeader.SizeOfImage;
+    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
+      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+      return 0;
+    }
+  }
+
+  inline PVOID pc_to_image_base(PVOID PcValue, bool ValidateHeaders = true)
+  {
+    MEMORY_BASIC_INFORMATION mbi{};
+
+    __try {
+      if ( VirtualQuery(PcValue, &mbi, sizeof(MEMORY_BASIC_INFORMATION)) == 0 )
+        return nullptr;
+
+      if ( mbi.State != MEM_COMMIT || (mbi.Protect & 0xff) == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD) )
+        return nullptr;
+
+      if ( ValidateHeaders && !nt::rtl::image_nt_headers(mbi.AllocationBase) )
+        return nullptr;
+
+      return mbi.AllocationBase;
+    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
+      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+      return nullptr;
+    }
+  }
+
+  inline PLDR_DATA_TABLE_ENTRY pc_to_ldr_data_table_entry(PVOID PcValue)
+  {
+    if ( !PcValue )
+      return nullptr;
+
+    const std::lock_guard Lock{*static_cast<critical_section *>(NtCurrentPeb()->LoaderLock)};
+    const auto ModuleList = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
+    for ( auto Next = ModuleList->Flink; Next != ModuleList; Next = Next->Flink ) {
+      const auto Entry = CONTAINING_RECORD(Next, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+      const auto Low = reinterpret_cast<UCHAR *>(Entry->DllBase);
+      if ( PcValue >= Low && PcValue < Low + Entry->SizeOfImage )
+        return Entry;
+    }
+    return nullptr;
   }
 
   static inline std::span<IMAGE_SECTION_HEADER> image_sections(PVOID Base)
   {
     const auto NtHeaders = image_nt_headers(Base);
     const auto Ptr = reinterpret_cast<PIMAGE_SECTION_HEADER>(
-        reinterpret_cast<ULONG_PTR>(NtHeaders) + offsetof(IMAGE_NT_HEADERS, OptionalHeader) + NtHeaders->FileHeader.SizeOfOptionalHeader);
+      reinterpret_cast<ULONG_PTR>(NtHeaders) + offsetof(IMAGE_NT_HEADERS, OptionalHeader) + NtHeaders->FileHeader.SizeOfOptionalHeader);
 
     return {Ptr, NtHeaders->FileHeader.NumberOfSections};
   }
@@ -386,33 +474,24 @@ namespace nt::rtl
     });
   }
 
-  inline std::pair<std::span<IMAGE_RUNTIME_FUNCTION_ENTRY>, PVOID> lookup_function_table(PVOID ControlPc)
+  inline std::span<IMAGE_RUNTIME_FUNCTION_ENTRY> lookup_function_table(PVOID ControlPc, PVOID *DllBase = nullptr)
   {
-    const auto Lock = std::lock_guard{*static_cast<critical_section *>(NtCurrentPeb()->LoaderLock)};
+    const std::lock_guard Lock{*static_cast<critical_section *>(NtCurrentPeb()->LoaderLock)};
     const auto ModuleList = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
     for ( auto Next = ModuleList->Flink; Next != ModuleList; Next = Next->Flink ) {
       const auto Entry = CONTAINING_RECORD(Next, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
       if ( (ControlPc >= Entry->DllBase)
-          && (ControlPc < reinterpret_cast<PUCHAR>(Entry->DllBase) + Entry->SizeOfImage) ) {
+        && (ControlPc < reinterpret_cast<PUCHAR>(Entry->DllBase) + Entry->SizeOfImage) ) {
 
-        return {image_directory_entry_to_data<IMAGE_RUNTIME_FUNCTION_ENTRY>(Entry->DllBase, IMAGE_DIRECTORY_ENTRY_EXCEPTION), Entry->DllBase};
+        if ( DllBase )
+          *DllBase = Entry->DllBase;
+
+        ULONG Size;
+        if ( const auto Data = image_directory_entry_to_data<IMAGE_RUNTIME_FUNCTION_ENTRY>(Entry->DllBase, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &Size) )
+          return {Data, Size};
+        return {};
       }
     }
     return {};
-  }
-
-  inline PVOID pc_to_file_header(PVOID PcValue)
-  {
-    if ( PcValue ) {
-      const auto Lock = std::lock_guard{*static_cast<critical_section *>(NtCurrentPeb()->LoaderLock)};
-      const auto ModuleList = &NtCurrentPeb()->Ldr->InLoadOrderModuleList;
-      for ( auto Next = ModuleList->Flink; Next != ModuleList; Next = Next->Flink ) {
-        const auto Entry = CONTAINING_RECORD(Next, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
-        const auto Low = reinterpret_cast<std::uint8_t *>(Entry->DllBase);
-        if ( PcValue >= Low && PcValue < Low + Entry->SizeOfImage )
-          return Entry->DllBase;
-      }
-    }
-    return nullptr;
   }
 }
