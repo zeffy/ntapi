@@ -50,7 +50,7 @@ inline ULONG BYTES_TO_PAGES(IN ULONG Size)
 }
 
 /*
-  The BYTE_OFFSET macro takes a virtual address and returns the byte offset
+  The BYTE_OFFSET macro takes a virtual address and returns the byte offset 
   of that address within the page.
 
   \param Va: Virtual address.
@@ -62,7 +62,7 @@ inline ULONG BYTE_OFFSET(IN PVOID Va)
 }
 
 /*
-  The PAGE_ALIGN macro takes a virtual address and returns a page-aligned
+  The PAGE_ALIGN macro takes a virtual address and returns a page-aligned 
   virtual address for that page.
 
   \param Va: Virtual address.
@@ -74,7 +74,7 @@ inline PVOID PAGE_ALIGN(IN PVOID Va)
 }
 
 /*
-  The ADDRESS_AND_SIZE_TO_SPAN_PAGES macro takes a virtual address and
+  The ADDRESS_AND_SIZE_TO_SPAN_PAGES macro takes a virtual address and 
   size and returns the number of pages spanned by the size.
 
   \param Va: Virtual address.
@@ -94,7 +94,6 @@ inline SIZE_T ADDRESS_AND_SIZE_TO_SPAN_PAGES(
     ((((Size - 1) & (PAGE_SIZE - 1)) + ((ULONG_PTR)Va & (PAGE_SIZE - 1))) >> PageShift)) + 1L;
 }
 
-
 namespace nt::rtl
 {
   class protect_memory
@@ -112,7 +111,6 @@ namespace nt::rtl
     protect_memory(HANDLE ProcessHandle, PVOID Va, SIZE_T Size, ULONG NewProtect)
       : process(ProcessHandle)
     {
-
       pointer = PAGE_ALIGN(Va);
       size = ADDRESS_AND_SIZE_TO_SPAN_PAGES(Va, Size) * PAGE_SIZE;
       THROW_IF_NTSTATUS_FAILED(NtProtectVirtualMemory(process, &pointer, &size, NewProtect, &protect));

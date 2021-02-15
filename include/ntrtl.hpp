@@ -335,100 +335,67 @@ namespace nt::rtl
       Base = NtCurrentPeb()->ImageBaseAddress;
 
     const auto DosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(Base);
-    __try {
-      if ( DosHeader->e_magic != IMAGE_DOS_SIGNATURE )
-        return nullptr;
-
-      const auto NtHeaders = image_rva_to_va<IMAGE_NT_HEADERS>(Base, DosHeader->e_lfanew);
-      if ( NtHeaders->Signature != IMAGE_NT_SIGNATURE )
-        return nullptr;
-
-      if ( !NtHeaders->FileHeader.SizeOfOptionalHeader )
-        return nullptr;
-
-      return NtHeaders;
-    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
-      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+    if ( DosHeader->e_magic != IMAGE_DOS_SIGNATURE )
       return nullptr;
-    }
+
+    const auto NtHeaders = image_rva_to_va<IMAGE_NT_HEADERS>(Base, DosHeader->e_lfanew);
+    if ( !NtHeaders
+      || NtHeaders->Signature != IMAGE_NT_SIGNATURE
+      || !NtHeaders->FileHeader.SizeOfOptionalHeader )
+      return nullptr;
+
+    return NtHeaders;
   }
 
   template<class T = UCHAR, typename = std::enable_if_t<std::is_pod_v<T>>>
-  inline T *image_directory_entry_to_data(PVOID Base, USHORT DirectoryEntry, ULONG *Size = nullptr)
+  inline T *image_directory_entry_to_data(PVOID Base, USHORT DirectoryEntry, ULONG *Count = nullptr)
   {
-    __try {
-      const auto NtHeaders = nt::rtl::image_nt_headers(Base);
-      if ( NtHeaders->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR_MAGIC )
-        return nullptr;
-
-      if ( DirectoryEntry >= NtHeaders->OptionalHeader.NumberOfRvaAndSizes
-        || !NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].VirtualAddress
-        || !NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].Size )
-        return nullptr;
-
-      if ( Size )
-        *Size = NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].Size;
-
-      return image_rva_to_va<T>(Base, NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].VirtualAddress);
-    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
-      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+    const auto NtHeaders = nt::rtl::image_nt_headers(Base);
+    if ( !NtHeaders
+      || NtHeaders->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR_MAGIC )
       return nullptr;
-    }
+
+    if ( DirectoryEntry >= NtHeaders->OptionalHeader.NumberOfRvaAndSizes
+      || !NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].VirtualAddress
+      || !NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].Size )
+      return nullptr;
+
+    if ( Count )
+      *Count = NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].Size / sizeof(T);
+
+    return image_rva_to_va<T>(Base, NtHeaders->OptionalHeader.DataDirectory[DirectoryEntry].VirtualAddress);
   }
 
   inline PVOID image_entry_point(PVOID Base)
   {
-    __try {
-      const auto NtHeaders = nt::rtl::image_nt_headers(Base);
+    const auto NtHeaders = nt::rtl::image_nt_headers(Base);
+    if ( !NtHeaders ) return nullptr;
 
-      ULONG Size;
-      const auto ClrHeader = nt::rtl::image_directory_entry_to_data<IMAGE_COR20_HEADER>(Base, IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR, &Size);
-
-      if ( ClrHeader ) {
-        const auto hClr = GetModuleHandleW(L"mscoree.dll");
-        if ( !hClr )
-          return nullptr;
-
-        return GetProcAddress(hClr, "_CorExeMain");
-      }
-
-      return image_rva_to_va(Base, NtHeaders->OptionalHeader.AddressOfEntryPoint);
-    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
-      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
-      return nullptr;
+    const auto ClrHeader = nt::rtl::image_directory_entry_to_data<IMAGE_COR20_HEADER>(Base, IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR);
+    if ( ClrHeader ) {
+      const auto hClr = GetModuleHandleW(L"mscoree.dll");
+      return hClr ? GetProcAddress(hClr, "_CorExeMain") : nullptr;
     }
+    return image_rva_to_va(Base, NtHeaders->OptionalHeader.AddressOfEntryPoint);
   }
 
   inline ULONG image_size(PVOID Base)
   {
-    __try {
-      const auto NtHeaders = nt::rtl::image_nt_headers(Base);
-      return NtHeaders->OptionalHeader.SizeOfImage;
-    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
-      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
-      return 0;
-    }
+    const auto NtHeaders = nt::rtl::image_nt_headers(Base);
+    return NtHeaders ? NtHeaders->OptionalHeader.SizeOfImage : 0;
   }
 
   inline PVOID pc_to_image_base(PVOID PcValue, bool ValidateHeaders = true)
   {
-    MEMORY_BASIC_INFORMATION mbi{};
+    MEMORY_BASIC_INFORMATION mbi;
 
-    __try {
-      if ( VirtualQuery(PcValue, &mbi, sizeof(MEMORY_BASIC_INFORMATION)) == 0 )
-        return nullptr;
-
-      if ( mbi.State != MEM_COMMIT || (mbi.Protect & 0xff) == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD) )
-        return nullptr;
-
-      if ( ValidateHeaders && !nt::rtl::image_nt_headers(mbi.AllocationBase) )
-        return nullptr;
-
-      return mbi.AllocationBase;
-    } __except ( GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ?
-      EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH ) {
+    if ( !PcValue
+      || VirtualQuery(PcValue, &mbi, sizeof(MEMORY_BASIC_INFORMATION)) == 0
+      || (mbi.State != MEM_COMMIT || (mbi.Protect & 0xff) == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD))
+      || (ValidateHeaders && !nt::rtl::image_nt_headers(mbi.AllocationBase)) )
       return nullptr;
-    }
+
+    return mbi.AllocationBase;
   }
 
   inline PLDR_DATA_TABLE_ENTRY pc_to_ldr_data_table_entry(PVOID PcValue)
@@ -447,7 +414,7 @@ namespace nt::rtl
     return nullptr;
   }
 
-  static inline std::span<IMAGE_SECTION_HEADER> image_sections(PVOID Base)
+  inline std::span<IMAGE_SECTION_HEADER> image_sections(PVOID Base)
   {
     const auto NtHeaders = image_nt_headers(Base);
     const auto Ptr = reinterpret_cast<PIMAGE_SECTION_HEADER>(
@@ -456,21 +423,18 @@ namespace nt::rtl
     return {Ptr, NtHeaders->FileHeader.NumberOfSections};
   }
 
-  static inline auto find_image_section(const std::span<IMAGE_SECTION_HEADER> &Sections, PCSTR Name, DWORD Characteristics = 0)
+  inline auto find_image_section(const std::span<IMAGE_SECTION_HEADER> &Sections, PCSTR Name)
   {
-    return std::find_if(Sections.begin(), Sections.end(), [Name, Characteristics](const auto &Section) {
-      if ( (Section.Characteristics & Characteristics) == Characteristics ) {
-        if ( !Name )
-          return true;
+    return std::find_if(Sections.begin(), Sections.end(), [&](const auto &Section) {
+      if ( !Name )
+        return true;
 
-        SIZE_T Size;
-        for ( Size = 0; Size < IMAGE_SIZEOF_SHORT_NAME; ++Size ) {
-          if ( !Section.Name[Size] )
-            break;
-        }
-        return std::string_view{reinterpret_cast<PCSTR>(Section.Name), Size} == Name;
+      SIZE_T Size;
+      for ( Size = 0; Size < IMAGE_SIZEOF_SHORT_NAME; ++Size ) {
+        if ( !Section.Name[Size] )
+          break;
       }
-      return false;
+      return std::string_view{reinterpret_cast<PCSTR>(Section.Name), Size} == Name;
     });
   }
 
@@ -486,9 +450,10 @@ namespace nt::rtl
         if ( DllBase )
           *DllBase = Entry->DllBase;
 
-        ULONG Size;
-        if ( const auto Data = image_directory_entry_to_data<IMAGE_RUNTIME_FUNCTION_ENTRY>(Entry->DllBase, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &Size) )
-          return {Data, Size};
+        ULONG Count;
+        const auto FunctionTable = image_directory_entry_to_data<IMAGE_RUNTIME_FUNCTION_ENTRY>(Entry->DllBase, IMAGE_DIRECTORY_ENTRY_EXCEPTION, &Count);
+        if ( FunctionTable )
+          return {FunctionTable, Count};
         return {};
       }
     }
