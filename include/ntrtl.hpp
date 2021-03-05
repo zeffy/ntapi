@@ -321,7 +321,7 @@ namespace nt::rtl
   using unicode_string_view = basic_string_view<UNICODE_STRING>;
 
   template<class T = void, typename = std::enable_if_t<std::is_void_v<T> || std::is_pod_v<T> || std::is_function_v<T>>>
-  inline T *image_rva_to_va(PVOID Base, ULONG Rva)
+  inline T *image_rva_to_va(PVOID Base, ULONG_PTR Rva)
   {
     if ( !Base )
       Base = NtCurrentPeb()->ImageBaseAddress;
