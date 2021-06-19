@@ -17,6 +17,37 @@
 
 namespace nt::rtl
 {
+  template<typename Ty>
+  struct allocator
+  {
+    using value_type = Ty;
+    using size_type = safe_size_t;
+    using difference_type = safe_ptrdiff_t;
+    using propagate_on_container_move_assignment = std::true_type;
+
+    allocator() noexcept {}
+
+    allocator(const allocator &) noexcept = default;
+
+    template <class Other>
+    allocator(const allocator<Other> &) noexcept {}
+
+    ~allocator() = default;
+
+    allocator &operator=(const allocator &) = default;
+
+    void deallocate(Ty *const Ptr, [[maybe_unused]] const size_type Count)
+    {
+      (VOID)RtlFreeHeap(RtlProcessHeap(), HEAP_ZERO_MEMORY, Ptr);
+    }
+
+    [[nodiscard]] __declspec(allocator) Ty *allocate(const size_type Count)
+    {
+      const size_type Size = sizeof(Ty) * Count;
+      return static_cast<Ty *>(RtlAllocateHeap(RtlProcessHeap(), HEAP_GENERATE_EXCEPTIONS | HEAP_ZERO_MEMORY, Size));
+    }
+  };
+
   class critical_section : public RTL_CRITICAL_SECTION
   {
   public:
@@ -53,6 +84,37 @@ namespace nt::rtl
     }
   };
 
+  class loader_lock
+  {
+  public:
+    using native_handle_type = PVOID;
+
+    void lock()
+    {
+      (VOID)LdrLockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, nullptr, &Cookie);
+    }
+
+    bool try_lock()
+    {
+      ULONG Disposition;
+      (VOID)LdrLockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS | LDR_LOCK_LOADER_LOCK_FLAG_TRY_ONLY, &Disposition, &Cookie);
+      return Disposition == LDR_LOCK_LOADER_LOCK_DISPOSITION_LOCK_ACQUIRED;
+    }
+
+    void unlock()
+    {
+      (VOID)LdrUnlockLoaderLock(LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS, Cookie);
+    }
+
+    native_handle_type native_handle()
+    {
+      return Cookie;
+    }
+
+  private:
+    PVOID Cookie;
+  };
+
   template <class T, typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING> || std::is_convertible_v<T, ANSI_STRING>>>
   class basic_string_view : public T
   {
@@ -73,7 +135,22 @@ namespace nt::rtl
 
   public:
     basic_string_view() = delete;
-    basic_string_view(const basic_string_view &) = delete;
+
+    template<typename = std::enable_if_t<std::is_convertible_v<T, ANSI_STRING>>>
+    basic_string_view(const ANSI_STRING &String)
+    {
+      this->Length = String.Length;
+      this->MaximumLength = String.MaximumLength;
+      this->Buffer = String.Buffer;
+    }
+
+    template<typename = std::enable_if_t<std::is_convertible_v<T, UNICODE_STRING>>>
+    basic_string_view(const UNICODE_STRING &String)
+    {
+      this->Length = String.Length;
+      this->MaximumLength = String.MaximumLength;
+      this->Buffer = String.Buffer;
+    }
 
     basic_string_view(const_pointer SourceString)
     {
@@ -93,9 +170,9 @@ namespace nt::rtl
 
     basic_string_view(const_pointer SourceString, size_type Length)
     {
-      this->Length = 0;
-      this->Length = Length;
-      this->MaximumLength = Length;
+      this->Length = Length * sizeof(value_type);
+      this->MaximumLength = Length * sizeof(value_type);
+      this->Buffer = const_cast<pointer>(SourceString);
     }
 
     const_reference operator[](size_t index) const
@@ -108,9 +185,14 @@ namespace nt::rtl
       return this->Buffer;
     }
 
-    size_type capacity() const
+    size_type capacity_bytes() const
     {
       return this->MaximumLength;
+    }
+
+    size_type capacity() const
+    {
+      return capacity_bytes() / sizeof(value_type);
     }
 
     size_type size_bytes() const
@@ -135,17 +217,17 @@ namespace nt::rtl
 
     const_reference back() const
     {
-      return operator[](this->size() - 1);
+      return operator[](size() - 1);
     }
 
     const_iterator begin() const
     {
-      return this->Buffer;
+      return &this->Buffer[0];
     }
 
     const_iterator end() const
     {
-      return const_iterator{reinterpret_cast<const UCHAR *>(this->Buffer) + size_bytes()};
+      return const_iterator{reinterpret_cast<const UCHAR *>(&this->Buffer[0]) + size_bytes()};
     }
 
     const_reverse_iterator rbegin() const
@@ -158,13 +240,13 @@ namespace nt::rtl
       return std::make_reverse_iterator(begin());
     }
 
-    long compare(const T &String) const
+    long compare(const basic_string_view &String) const
     {
       auto s1 = begin();
-      auto s2 = String.Buffer;
+      auto s2 = String.begin();
 
       const auto n1 = size_bytes();
-      const auto n2 = String.Length;
+      const auto n2 = String.size_bytes();
 
       while ( s1 < end() ) {
         if ( *s1 != *s2 )
@@ -177,7 +259,7 @@ namespace nt::rtl
 
     long compare(const_pointer String) const
     {
-      return this->compare(basic_string_view{String});
+      return compare(basic_string_view{String});
     }
 
     template<typename = std::enable_if_t<std::is_convertible_v<T, ANSI_STRING>>>
@@ -315,6 +397,54 @@ namespace nt::rtl
     {
       return iends_with(basic_string_view{String});
     }
+
+    bool is_valid() const
+    {
+      return (size_bytes() & 1) == 0
+        && (capacity_bytes() & 1) == 0
+        && size_bytes() <= capacity_bytes()
+        && capacity_bytes() < std::numeric_limits<size_type>::max()
+        && (data() || (!size_bytes() && !capacity_bytes));
+    }
+
+    operator bool() const
+    {
+      return is_valid();
+    }
+
+    std::string string() const
+    {
+      std::string str;
+
+      if constexpr ( std::is_convertible_v<T, ANSI_STRING> ) {
+        str.reserve(size() + sizeof(ANSI_NULL));
+        std::copy(begin(), end(), std::back_inserter(str));
+      } else if constexpr ( std::is_convertible_v<T, UNICODE_STRING> ) {
+        ANSI_STRING DestinationString;
+        THROW_IF_NTSTATUS_FAILED(RtlUnicodeStringToAnsiString(&DestinationString, this, TRUE));
+        str.reserve(DestinationString.Length);
+        std::copy(DestinationString.Buffer, DestinationString.Buffer + DestinationString.Length, std::back_inserter(str));
+        RtlFreeAnsiString(&DestinationString);
+      }
+      return str;
+    }
+
+    std::wstring wstring() const
+    {
+      std::wstring wstr;
+
+      if constexpr ( std::is_convertible_v<T, ANSI_STRING> ) {
+        UNICODE_STRING DestinationString;
+        THROW_IF_NTSTATUS_FAILED(RtlAnsiStringToUnicodeString(&DestinationString, this, TRUE));
+        wstr.reserve(DestinationString.Length >> 1);
+        std::copy(DestinationString.Buffer, (PWCH)((PCHAR)DestinationString.Buffer + DestinationString.Length), std::back_inserter(wstr));
+        RtlFreeUnicodeString(&DestinationString);
+      } else if constexpr ( std::is_convertible_v<T, UNICODE_STRING> ) {
+        wstr.reserve(size() + sizeof(UNICODE_NULL));
+        std::copy(begin(), end(), std::back_inserter(wstr));
+      }
+      return wstr;
+    }
   };
 
   using ansi_string_view = basic_string_view<ANSI_STRING>;
@@ -385,14 +515,13 @@ namespace nt::rtl
     return NtHeaders ? NtHeaders->OptionalHeader.SizeOfImage : 0;
   }
 
-  inline PVOID pc_to_image_base(PVOID PcValue, bool ValidateHeaders = true)
+  inline PVOID pc_to_image_base(PVOID PcValue)
   {
     MEMORY_BASIC_INFORMATION mbi;
 
     if ( !PcValue
       || VirtualQuery(PcValue, &mbi, sizeof(MEMORY_BASIC_INFORMATION)) == 0
-      || (mbi.State != MEM_COMMIT || (mbi.Protect & 0xff) == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD))
-      || (ValidateHeaders && !nt::rtl::image_nt_headers(mbi.AllocationBase)) )
+      || (mbi.State != MEM_COMMIT || (mbi.Protect & 0xff) == PAGE_NOACCESS || (mbi.Protect & PAGE_GUARD)) )
       return nullptr;
 
     return mbi.AllocationBase;
@@ -423,9 +552,9 @@ namespace nt::rtl
     return {Ptr, NtHeaders->FileHeader.NumberOfSections};
   }
 
-  inline auto find_image_section(const std::span<IMAGE_SECTION_HEADER> &Sections, PCSTR Name)
+  inline auto find_image_section_by_name(const std::span<IMAGE_SECTION_HEADER> &Sections, PCSTR Name)
   {
-    return std::find_if(Sections.begin(), Sections.end(), [&](const auto &Section) {
+    return std::find_if(Sections.begin(), Sections.end(), [&](const IMAGE_SECTION_HEADER &Section) {
       if ( !Name )
         return true;
 
